@@ -1,0 +1,234 @@
+name: Update Multi-Source M3U Playlist
+
+on:
+  schedule:
+    # Runs every 2 minutes
+    - cron: '*/2 * * * *'
+  workflow_dispatch: # Allows manual triggering
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.PAT_TOKEN }}
+        fetch-depth: 1
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Fetch M3U content from multiple sources
+      run: |
+        echo "=== FETCHING M3U PLAYLISTS FROM MULTIPLE SOURCES ==="
+        
+        # Create temporary directory for downloads
+        mkdir -p temp_playlists
+        
+        # Counter for successful downloads
+        SUCCESS_COUNT=0
+        TOTAL_CHANNELS=0
+        
+        # Array of M3U URLs (add your secret names here)
+        declare -a M3U_SECRETS=(
+          "M3U_URL"
+          "M3UU_URL"
+          "M3U_URL_3"
+          "M3U_URL_4"
+          "M3U_URL_5"
+        )
+        
+        # Download from each source
+        for i in "${!M3U_SECRETS[@]}"; do
+          SECRET_NAME="${M3U_SECRETS[$i]}"
+          SECRET_VALUE=""
+          
+          # Get secret value (using indirect reference)
+          case $SECRET_NAME in
+            "D1") SECRET_VALUE="${{ secrets.D1 }}" ;;
+            "D2") SECRET_VALUE="${{ secrets.D2 }}" ;;
+            "D3") SECRET_VALUE="${{ secrets.D3 }}" ;;
+            "D4") SECRET_VALUE="${{ secrets.D4 }}" ;;
+            "D5") SECRET_VALUE="${{ secrets.D5 }}" ;;
+          esac
+          
+          # Skip if secret is empty
+          if [ -z "$SECRET_VALUE" ]; then
+            echo "⚠️  $SECRET_NAME is empty, skipping..."
+            continue
+          fi
+          
+          echo "📡 Fetching from source $((i+1)): $SECRET_NAME"
+          
+          # Download the playlist
+          if curl -s -L --connect-timeout 30 --max-time 60 "$SECRET_VALUE" > "temp_playlists/playlist_$((i+1)).m3u"; then
+            # Check if file has content
+            if [ -s "temp_playlists/playlist_$((i+1)).m3u" ]; then
+              LINES=$(wc -l < "temp_playlists/playlist_$((i+1)).m3u")
+              CHANNELS=$(grep -c "^#EXTINF" "temp_playlists/playlist_$((i+1)).m3u" || echo "0")
+              echo "✅ Source $((i+1)): $LINES lines, $CHANNELS channels"
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              TOTAL_CHANNELS=$((TOTAL_CHANNELS + CHANNELS))
+            else
+              echo "❌ Source $((i+1)): Empty file"
+              rm -f "temp_playlists/playlist_$((i+1)).m3u"
+            fi
+          else
+            echo "❌ Source $((i+1)): Download failed"
+          fi
+        done
+        
+        echo "=== DOWNLOAD SUMMARY ==="
+        echo "✅ Successful downloads: $SUCCESS_COUNT"
+        echo "📺 Total channels: $TOTAL_CHANNELS"
+        
+        # Check if we have at least one successful download
+        if [ $SUCCESS_COUNT -eq 0 ]; then
+          echo "❌ ERROR: No playlists were successfully downloaded!"
+          exit 1
+        fi
+
+    - name: Combine M3U playlists
+      run: |
+        echo "=== COMBINING M3U PLAYLISTS ==="
+        
+        # Create the combined playlist with header
+        cat > combined_playlist.m3u << 'EOF'
+        #EXTM3U
+        #PLAYLIST:Combined Multi-Source Playlist
+        #DESCRIPTION:Auto-generated combined playlist from multiple sources
+        EOF
+        
+        echo "" >> combined_playlist.m3u
+        
+        # Process each downloaded playlist
+        SOURCE_COUNT=0
+        for playlist_file in temp_playlists/playlist_*.m3u; do
+          if [ -f "$playlist_file" ]; then
+            SOURCE_COUNT=$((SOURCE_COUNT + 1))
+            
+            # Extract source number from filename
+            SOURCE_NUM=$(basename "$playlist_file" .m3u | sed 's/playlist_//')
+            
+            echo "🔗 Processing Source $SOURCE_NUM..."
+            
+            # Add source separator comment
+            echo "# ==================== SOURCE $SOURCE_NUM ====================" >> combined_playlist.m3u
+            
+            # Add content (skip the first #EXTM3U line if present)
+            grep -v "^#EXTM3U$" "$playlist_file" >> combined_playlist.m3u
+            
+            # Add empty line between sources
+            echo "" >> combined_playlist.m3u
+            
+            # Count channels in this source
+            CHANNELS=$(grep -c "^#EXTINF" "$playlist_file" || echo "0")
+            echo "   📺 Added $CHANNELS channels from Source $SOURCE_NUM"
+          fi
+        done
+        
+        # Final statistics
+        TOTAL_LINES=$(wc -l < combined_playlist.m3u)
+        TOTAL_CHANNELS=$(grep -c "^#EXTINF" combined_playlist.m3u || echo "0")
+        
+        echo "=== COMBINATION COMPLETE ==="
+        echo "📁 Sources processed: $SOURCE_COUNT"
+        echo "📄 Total lines: $TOTAL_LINES"
+        echo "📺 Total channels: $TOTAL_CHANNELS"
+
+    - name: Check for changes
+      id: check_changes
+      run: |
+        TARGET_FILE="playlist.m3u"
+        
+        if [ ! -f "$TARGET_FILE" ]; then
+          echo "🆕 Target file doesn't exist, will create it"
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        else
+          if ! cmp -s combined_playlist.m3u "$TARGET_FILE"; then
+            echo "🔄 Changes detected in combined M3U playlist"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            
+            # Show detailed comparison
+            OLD_CHANNELS=$(grep -c "^#EXTINF" "$TARGET_FILE" || echo "0")
+            NEW_CHANNELS=$(grep -c "^#EXTINF" combined_playlist.m3u || echo "0")
+            CHANNEL_DIFF=$((NEW_CHANNELS - OLD_CHANNELS))
+            
+            echo "=== CHANGES DETECTED ==="
+            echo "📺 Old channels: $OLD_CHANNELS"
+            echo "📺 New channels: $NEW_CHANNELS"
+            echo "📊 Channel difference: $CHANNEL_DIFF"
+          else
+            echo "✅ No changes detected"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+    - name: Update playlist file
+      if: steps.check_changes.outputs.has_changes == 'true'
+      run: |
+        # Move the combined content to the target file
+        mv combined_playlist.m3u playlist.m3u
+        
+        TOTAL_CHANNELS=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
+        echo "✅ Playlist updated successfully with $TOTAL_CHANNELS channels"
+
+    - name: Commit and push changes
+      if: steps.check_changes.outputs.has_changes == 'true'
+      run: |
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add the updated file
+        git add playlist.m3u
+        
+        # Create detailed commit message
+        TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        CHANNEL_COUNT=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
+        FILE_SIZE=$(du -h playlist.m3u | cut -f1)
+        
+        git commit -m "🔄 Auto-update Multi-Source M3U Playlist - $TIMESTAMP
+
+        📺 Total Channels: $CHANNEL_COUNT
+        📁 File Size: $FILE_SIZE
+        🔗 Multi-source combined playlist
+        🤖 Updated by GitHub Actions
+        ⏰ Last update: $TIMESTAMP"
+        
+        # Push changes
+        git push
+
+    - name: Cleanup
+      if: always()
+      run: |
+        # Remove temporary files and directories
+        rm -rf temp_playlists/
+        rm -f combined_playlist.m3u
+        
+        echo "🧹 Cleanup completed"
+
+    - name: Workflow summary
+      if: always()
+      run: |
+        echo "=== FINAL WORKFLOW SUMMARY ==="
+        echo "🏁 Status: ${{ job.status }}"
+        echo "🔄 Changes detected: ${{ steps.check_changes.outputs.has_changes }}"
+        echo "⏰ Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        
+        if [ -f playlist.m3u ]; then
+          CHANNEL_COUNT=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
+          FILE_SIZE=$(du -h playlist.m3u | cut -f1)
+          echo "📺 Current total channels: $CHANNEL_COUNT"
+          echo "📁 File size: $FILE_SIZE"
+        fi
+        
+        echo "✨ Multi-source M3U playlist update completed!"
