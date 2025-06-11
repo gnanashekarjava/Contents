@@ -39,11 +39,14 @@ jobs:
         
         # Array of M3U URLs (add your secret names here)
         declare -a M3U_SECRETS=(
-          "M3U_URL"
-          "M3UU_URL"
-          "M3U_URL_3"
-          "M3U_URL_4"
-          "M3U_URL_5"
+          "D1"
+          "D2"
+          "D3"
+          "D4"
+          "D5"
+          "D6"
+          "D7"
+          "D8"
         )
         
         # Download from each source
@@ -58,6 +61,9 @@ jobs:
             "D3") SECRET_VALUE="${{ secrets.D3 }}" ;;
             "D4") SECRET_VALUE="${{ secrets.D4 }}" ;;
             "D5") SECRET_VALUE="${{ secrets.D5 }}" ;;
+            "D6") SECRET_VALUE="${{ secrets.D6 }}" ;;
+            "D7") SECRET_VALUE="${{ secrets.D7 }}" ;;
+            "D8") SECRET_VALUE="${{ secrets.D8 }}" ;;
           esac
           
           # Skip if secret is empty
@@ -147,7 +153,7 @@ jobs:
     - name: Check for changes
       id: check_changes
       run: |
-        TARGET_FILE="playlist.m3u"
+        TARGET_FILE="AstroSmart.m3u"
         
         if [ ! -f "$TARGET_FILE" ]; then
           echo "🆕 Target file doesn't exist, will create it"
@@ -176,10 +182,10 @@ jobs:
       if: steps.check_changes.outputs.has_changes == 'true'
       run: |
         # Move the combined content to the target file
-        mv combined_playlist.m3u playlist.m3u
+        mv combined_playlist.m3u AstroSmart.m3u
         
-        TOTAL_CHANNELS=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
-        echo "✅ Playlist updated successfully with $TOTAL_CHANNELS channels"
+        TOTAL_CHANNELS=$(grep -c "^#EXTINF" AstroSmart.m3u || echo "0")
+        echo "✅ AstroSmart.m3u updated successfully with $TOTAL_CHANNELS channels"
 
     - name: Commit and push changes
       if: steps.check_changes.outputs.has_changes == 'true'
@@ -189,14 +195,14 @@ jobs:
         git config --local user.name "GitHub Action"
         
         # Add the updated file
-        git add playlist.m3u
+        git add AstroSmart.m3u
         
         # Create detailed commit message
         TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-        CHANNEL_COUNT=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
-        FILE_SIZE=$(du -h playlist.m3u | cut -f1)
+        CHANNEL_COUNT=$(grep -c "^#EXTINF" AstroSmart.m3u || echo "0")
+        FILE_SIZE=$(du -h AstroSmart.m3u | cut -f1)
         
-        git commit -m "🔄 Auto-update Multi-Source M3U Playlist - $TIMESTAMP
+        git commit -m "🔄 Auto-update AstroSmart M3U Playlist - $TIMESTAMP
 
         📺 Total Channels: $CHANNEL_COUNT
         📁 File Size: $FILE_SIZE
@@ -224,11 +230,11 @@ jobs:
         echo "🔄 Changes detected: ${{ steps.check_changes.outputs.has_changes }}"
         echo "⏰ Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
         
-        if [ -f playlist.m3u ]; then
-          CHANNEL_COUNT=$(grep -c "^#EXTINF" playlist.m3u || echo "0")
-          FILE_SIZE=$(du -h playlist.m3u | cut -f1)
+        if [ -f AstroSmart.m3u ]; then
+          CHANNEL_COUNT=$(grep -c "^#EXTINF" AstroSmarty.m3u || echo "0")
+          FILE_SIZE=$(du -h AstroSmart.m3u | cut -f1)
           echo "📺 Current total channels: $CHANNEL_COUNT"
           echo "📁 File size: $FILE_SIZE"
         fi
         
-        echo "✨ Multi-source M3U playlist update completed!"
+        echo "✨ AstroSmart M3U playlist update completed!"
