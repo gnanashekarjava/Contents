@@ -45,13 +45,13 @@ jobs:
             # Fetch the API response for current channel
             response=$(curl -s -H "Referer: $REFERER_URL" "$API_ENDPOINT?id=$id")
             
-            # Parse JSON response and transform
-            if [ -n "$response" ] && echo "$response" | jq empty 2>/dev/null; then
-              # Extract values from JSON
-              channel_id=$(echo "$response" | jq -r '.id // empty')
-              mpd_url=$(echo "$response" | jq -r '.mpd // empty')
-              kid=$(echo "$response" | jq -r '.kid // empty')
-              key=$(echo "$response" | jq -r '.key // empty')
+            # Check if response is not empty and contains expected JSON structure
+            if [ -n "$response" ] && echo "$response" | grep -q '"id"' && echo "$response" | grep -q '"mpd"'; then
+              # Extract values using grep and sed (pure bash approach)
+              channel_id=$(echo "$response" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+              mpd_url=$(echo "$response" | sed -n 's/.*"mpd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+              kid=$(echo "$response" | sed -n 's/.*"kid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+              key=$(echo "$response" | sed -n 's/.*"key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
               
               # Only process if we have valid data
               if [ -n "$channel_id" ] && [ -n "$mpd_url" ] && [ -n "$kid" ] && [ -n "$key" ]; then
@@ -73,17 +73,18 @@ jobs:
                 # Construct the new format
                 new_mpd_url="${base_url}?%7Ccookie=hdnea=${hdnea_param}&Origin=https://watch.tataplay.com&Referer=https://watch.tataplay.com/&drmScheme=clearkey&drmLicense=${kid}:${key}"
                 
-                # Create transformed JSON object
+                # Create transformed JSON object (properly escaped)
                 cat << EOF >> get.txt
 {
     "id": "$channel_id",
     "mpd": "$new_mpd_url"
 }EOF
               else
-                echo "Warning: Invalid data for channel ID: $id"
+                echo "Warning: Incomplete data for channel ID: $id"
               fi
             else
-              echo "Warning: Invalid JSON response for channel ID: $id"
+              echo "Warning: Invalid or empty response for channel ID: $id"
+              echo "Response: $response"
             fi
             
             # Optional: Add delay between requests to avoid rate limiting
@@ -95,7 +96,8 @@ jobs:
           echo "]" >> get.txt
           
           echo "All channels processed successfully!"
-          echo "Total file size: $(wc -c < get.txt) bytes"
+          echo "Final output:"
+          cat get.txt
 
       - name: Commit and push get.txt
         run: |
