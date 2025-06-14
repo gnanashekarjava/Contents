@@ -1,0 +1,108 @@
+name: Fetch CDN URLs Every 5 min
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-cdn-urls:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch and transform channel responses
+        run: |
+          # Read channel IDs from secrets (comma-separated)
+          IFS=',' read -ra CHANNEL_IDS <<< "${{ secrets.CHANNEL_IDS }}"
+          
+          # Get API configuration from secrets
+          REFERER_URL="${{ secrets.REFERER_URL }}"
+          API_ENDPOINT="${{ secrets.API_ENDPOINT }}"
+          
+          # Create or clear the output file
+          > get.txt
+          
+          echo "Fetching and transforming data for ${#CHANNEL_IDS[@]} channels..."
+          
+          # Start JSON array
+          echo "[" >> get.txt
+          
+          # Track if first item (for comma handling)
+          first_item=true
+          
+          # Loop through each channel ID
+          for id in "${CHANNEL_IDS[@]}"; do
+            # Trim whitespace
+            id=$(echo "$id" | xargs)
+            
+            echo "Processing channel ID: $id"
+            
+            # Fetch the API response for current channel
+            response=$(curl -s -H "Referer: $REFERER_URL" "$API_ENDPOINT?id=$id")
+            
+            # Parse JSON response and transform
+            if [ -n "$response" ] && echo "$response" | jq empty 2>/dev/null; then
+              # Extract values from JSON
+              channel_id=$(echo "$response" | jq -r '.id // empty')
+              mpd_url=$(echo "$response" | jq -r '.mpd // empty')
+              kid=$(echo "$response" | jq -r '.kid // empty')
+              key=$(echo "$response" | jq -r '.key // empty')
+              
+              # Only process if we have valid data
+              if [ -n "$channel_id" ] && [ -n "$mpd_url" ] && [ -n "$kid" ] && [ -n "$key" ]; then
+                # Add comma if not first item
+                if [ "$first_item" = false ]; then
+                  echo "," >> get.txt
+                fi
+                first_item=false
+                
+                # Clean MPD URL (remove escaped slashes)
+                clean_mpd_url=$(echo "$mpd_url" | sed 's/\\//g')
+                
+                # Extract hdnea parameter from URL
+                hdnea_param=$(echo "$clean_mpd_url" | sed -n 's/.*hdnea=\([^&]*\).*/\1/p')
+                
+                # Get base URL (everything before the query parameters)
+                base_url=$(echo "$clean_mpd_url" | sed 's/?.*$//')
+                
+                # Construct the new format
+                new_mpd_url="${base_url}?%7Ccookie=hdnea=${hdnea_param}&Origin=https://watch.tataplay.com&Referer=https://watch.tataplay.com/&drmScheme=clearkey&drmLicense=${kid}:${key}"
+                
+                # Create transformed JSON object
+                cat << EOF >> get.txt
+{
+    "id": "$channel_id",
+    "mpd": "$new_mpd_url"
+}EOF
+              else
+                echo "Warning: Invalid data for channel ID: $id"
+              fi
+            else
+              echo "Warning: Invalid JSON response for channel ID: $id"
+            fi
+            
+            # Optional: Add delay between requests to avoid rate limiting
+            sleep 1
+          done
+          
+          # Close JSON array
+          echo "" >> get.txt
+          echo "]" >> get.txt
+          
+          echo "All channels processed successfully!"
+          echo "Total file size: $(wc -c < get.txt) bytes"
+
+      - name: Commit and push get.txt
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add get.txt
+          git commit -m "Update get.txt with multiple channels - $(date -u)" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
