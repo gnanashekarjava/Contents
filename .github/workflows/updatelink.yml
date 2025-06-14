@@ -73,12 +73,11 @@ jobs:
                 # Construct the new format
                 new_mpd_url="${base_url}?%7Ccookie=hdnea=${hdnea_param}&Origin=https://watch.tataplay.com&Referer=https://watch.tataplay.com/&drmScheme=clearkey&drmLicense=${kid}:${key}"
                 
-                # Create transformed JSON object (properly escaped)
-                cat << EOF >> get.txt
-{
-    "id": "$channel_id",
-    "mpd": "$new_mpd_url"
-}EOF
+                # Create transformed JSON object
+                echo "{" >> get.txt
+                echo "    \"id\": \"$channel_id\"," >> get.txt
+                echo "    \"mpd\": \"$new_mpd_url\"" >> get.txt
+                echo "}" >> get.txt
               else
                 echo "Warning: Incomplete data for channel ID: $id"
               fi
